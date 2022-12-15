@@ -24,6 +24,18 @@ export type GlobalTargetName = 'document'|'window'|'body';
 
 export type GlobalTargetResolver = (element: any) => EventTarget;
 
+export const enum UpdateContextType {
+  PUSH_PARENT,
+  POP_PARENT,
+}
+
+type UpdateContextPushParentArgs = [UpdateContextType.PUSH_PARENT, RElement | null];
+type UpdateContextPopParentArgs = [UpdateContextType.POP_PARENT];
+
+type UpdateContextArgs =|UpdateContextPushParentArgs|UpdateContextPopParentArgs;
+
+type UpdateContextFunction = (...args: UpdateContextArgs) => void;
+
 /**
  * Procedural style of API needed to create elements and text nodes.
  *
@@ -64,6 +76,9 @@ export interface Renderer {
   listen(
       target: GlobalTargetName|RNode, eventName: string,
       callback: (event: any) => boolean | void): () => void;
+
+
+  updateContext?: UpdateContextFunction;
 }
 
 export interface RendererFactory {

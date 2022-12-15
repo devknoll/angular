@@ -11,11 +11,12 @@ import {assertFirstCreatePass, assertHasParent} from '../assert';
 import {attachPatchData} from '../context_discovery';
 import {registerPostOrderHooks} from '../hooks';
 import {hasClassInput, hasStyleInput, TAttributes, TElementNode, TNodeFlags, TNodeType} from '../interfaces/node';
+import {UpdateContextType} from '../interfaces/renderer';
 import {RElement} from '../interfaces/renderer_dom';
 import {isContentQueryHost, isDirectiveHost} from '../interfaces/type_checks';
 import {HEADER_OFFSET, LView, RENDERER, TView} from '../interfaces/view';
 import {assertTNodeType} from '../node_assert';
-import {appendChild, createElementNode, setupStaticAttributes} from '../node_manipulation';
+import {appendChild, createElementNode, getParentRElement, setupStaticAttributes} from '../node_manipulation';
 import {decreaseElementDepthCount, getBindingIndex, getCurrentTNode, getElementDepthCount, getLView, getNamespace, getTView, increaseElementDepthCount, isCurrentTNodeParent, setCurrentTNode, setCurrentTNodeAsNotParent} from '../state';
 import {computeStaticStyling} from '../styling/static_styling';
 import {getConstant} from '../util/view_utils';
@@ -26,20 +27,15 @@ import {createDirectivesInstances, executeContentQueries, getOrCreateTNode, reso
 
 
 function elementStartFirstCreatePass(
-    index: number, tView: TView, lView: LView, native: RElement, name: string,
-    attrsIndex?: number|null, localRefsIndex?: number): TElementNode {
+    index: number, tView: TView, lView: LView, name: string, attrsIndex?: number|null,
+    localRefsIndex?: number): TElementNode {
   ngDevMode && assertFirstCreatePass(tView);
   ngDevMode && ngDevMode.firstCreatePass++;
 
   const tViewConsts = tView.consts;
   const attrs = getConstant<TAttributes>(tViewConsts, attrsIndex);
   const tNode = getOrCreateTNode(tView, index, TNodeType.Element, name, attrs);
-
-  const hasDirectives =
-      resolveDirectives(tView, lView, tNode, getConstant<string[]>(tViewConsts, localRefsIndex));
-  if (ngDevMode) {
-    validateElementIsKnown(native, lView, tNode.value, tView.schemas, hasDirectives);
-  }
+  resolveDirectives(tView, lView, tNode, getConstant<string[]>(tViewConsts, localRefsIndex));
 
   if (tNode.attrs !== null) {
     computeStaticStyling(tNode, tNode.attrs, false);
@@ -85,19 +81,40 @@ export function ɵɵelementStart(
   ngDevMode && assertIndexInRange(lView, adjustedIndex);
 
   const renderer = lView[RENDERER];
-  const native = lView[adjustedIndex] = createElementNode(renderer, name, getNamespace());
-  const tNode = tView.firstCreatePass ?
-      elementStartFirstCreatePass(
-          adjustedIndex, tView, lView, native, name, attrsIndex, localRefsIndex) :
+  const firstCreatePass = tView.firstCreatePass;
+  const tNode = firstCreatePass ?
+      elementStartFirstCreatePass(adjustedIndex, tView, lView, name, attrsIndex, localRefsIndex) :
       tView.data[adjustedIndex] as TElementNode;
+  const shouldAppendChild = (tNode.flags & TNodeFlags.isDetached) !== TNodeFlags.isDetached;
+  const updateContext = renderer.updateContext;
+  const shouldPushNullParent = !shouldAppendChild && updateContext;
+
+  if (shouldPushNullParent) {
+    updateContext.call(renderer, UpdateContextType.PUSH_PARENT, null);
+  }
+
+  const native = lView[adjustedIndex] = createElementNode(renderer, name, getNamespace());
+  if (ngDevMode && firstCreatePass) {
+    validateElementIsKnown(
+        native, lView, tNode.value, tView.schemas,
+        (tNode.flags & TNodeFlags.isDirectiveHost) === TNodeFlags.isDirectiveHost);
+  }
+
+  if (shouldPushNullParent) {
+    updateContext.call(renderer, UpdateContextType.POP_PARENT);
+  }
+
   setCurrentTNode(tNode, true);
   setupStaticAttributes(renderer, native, tNode);
 
-  if ((tNode.flags & TNodeFlags.isDetached) !== TNodeFlags.isDetached) {
+  if (shouldAppendChild) {
     // In the i18n case, the translation may have removed this element, so only add it if it is not
     // detached. See `TNodeType.Placeholder` and `LFrame.inI18n` for more context.
     appendChild(tView, lView, native, tNode);
   }
+
+  // Set this element as the context for future calls.
+  updateContext && updateContext.call(renderer, UpdateContextType.PUSH_PARENT, native);
 
   // any immediate children of a component or template container must be pre-emptively
   // monkey-patched with the component view data so that the element can be inspected
@@ -141,7 +158,13 @@ export function ɵɵelementEnd(): typeof ɵɵelementEnd {
 
   decreaseElementDepthCount();
 
+  const lView = getLView();
   const tView = getTView();
+  const renderer = lView[RENDERER];
+  const updateContext = renderer.updateContext;
+
+  updateContext && updateContext.call(renderer, UpdateContextType.POP_PARENT);
+
   if (tView.firstCreatePass) {
     registerPostOrderHooks(tView, currentTNode);
     if (isContentQueryHost(currentTNode)) {

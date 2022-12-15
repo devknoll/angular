@@ -124,7 +124,6 @@ export function createElementNode(
   return renderer.createElement(name, namespace);
 }
 
-
 /**
  * Removes all DOM elements associated with a view.
  *
