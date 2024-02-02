@@ -17,7 +17,7 @@ import {CharCode} from '../../util/char_code';
 import {loadIcuContainerVisitor} from '../instructions/i18n_icu_container_visitor';
 import {allocExpando, createTNodeAtIndex} from '../instructions/shared';
 import {getDocument} from '../interfaces/document';
-import {ELEMENT_MARKER, I18nCreateOpCode, I18nCreateOpCodes, I18nRemoveOpCodes, I18nUpdateOpCode, I18nUpdateOpCodes, ICU_MARKER, IcuCreateOpCode, IcuCreateOpCodes, IcuExpression, IcuType, TI18n, TIcu} from '../interfaces/i18n';
+import {ELEMENT_MARKER, I18nCreateOpCode, I18nCreateOpCodes, I18nElementNode, I18nICUNode, I18nNode, I18nNodeKind, I18nPlaceholderNode, I18nPlaceholderType, I18nRemoveOpCodes, I18nTextNode, I18nUpdateOpCode, I18nUpdateOpCodes, ICU_MARKER, IcuCreateOpCode, IcuCreateOpCodes, IcuExpression, IcuType, TI18n, TIcu} from '../interfaces/i18n';
 import {TNode, TNodeType} from '../interfaces/node';
 import {SanitizerFn} from '../interfaces/sanitization';
 import {HEADER_OFFSET, LView, TView} from '../interfaces/view';
@@ -88,6 +88,7 @@ export function i18nStartFirstCreatePass(
   const createOpCodes: I18nCreateOpCodes = [] as any;
   const updateOpCodes: I18nUpdateOpCodes = [] as any;
   const existingTNodeStack: TNode[][] = [[]];
+  const astStack: Array<Array<I18nNode>> = [[]];
   if (ngDevMode) {
     attachDebugGetter(createOpCodes, i18nCreateOpCodesToString);
     attachDebugGetter(updateOpCodes, i18nUpdateOpCodesToString);
@@ -107,8 +108,9 @@ export function i18nStartFirstCreatePass(
           const text = part as string;
           ngDevMode && assertString(text, 'Parsed ICU part should be string');
           if (text !== '') {
-            i18nStartFirstCreatePassProcessTextNode(
+            const textNodeIndex = i18nStartFirstCreatePassProcessTextNode(
                 tView, rootTNode, existingTNodeStack[0], createOpCodes, updateOpCodes, lView, text);
+            astStack[0].push({kind: I18nNodeKind.TEXT, index: textNodeIndex, debug: text});
           }
         } else {
           // `j` is Even therefor `part` is an `ICUExpression`
@@ -129,7 +131,8 @@ export function i18nStartFirstCreatePass(
           ngDevMode &&
               assertGreaterThanOrEqual(
                   icuNodeIndex, HEADER_OFFSET, 'Index must be in absolute LView offset');
-          icuStart(tView, lView, updateOpCodes, parentTNodeIndex, icuExpression, icuNodeIndex);
+          astStack[0].push(
+              icuStart(tView, lView, updateOpCodes, parentTNodeIndex, icuExpression, icuNodeIndex));
         }
       }
     } else {
@@ -141,11 +144,22 @@ export function i18nStartFirstCreatePass(
       const index = HEADER_OFFSET + Number.parseInt(value.substring((isClosing ? 2 : 1)));
       if (isClosing) {
         existingTNodeStack.shift();
+        astStack.shift();
         setCurrentTNode(getCurrentParentTNode()!, false);
       } else {
         const tNode = createTNodePlaceholder(tView, existingTNodeStack[0], index);
         existingTNodeStack.unshift([]);
         setCurrentTNode(tNode, true);
+
+        const ast: I18nPlaceholderNode = {
+          kind: I18nNodeKind.PLACEHOLDER,
+          index,
+          children: [],
+          type: type === CharCode.HASH ? I18nPlaceholderType.ELEMENT :
+                                         I18nPlaceholderType.SUBTEMPLATE,
+        };
+        astStack[0].push(ast);
+        astStack.unshift(ast.children);
       }
     }
   }
@@ -153,6 +167,7 @@ export function i18nStartFirstCreatePass(
   tView.data[index] = <TI18n>{
     create: createOpCodes,
     update: updateOpCodes,
+    ast: astStack[0],
   };
 }
 
@@ -230,13 +245,15 @@ function createTNodeAndAddOpCode(
  */
 function i18nStartFirstCreatePassProcessTextNode(
     tView: TView, rootTNode: TNode|null, existingTNodes: TNode[], createOpCodes: I18nCreateOpCodes,
-    updateOpCodes: I18nUpdateOpCodes, lView: LView, text: string): void {
+    updateOpCodes: I18nUpdateOpCodes, lView: LView, text: string): number {
   const hasBinding = text.match(BINDING_REGEXP);
   const tNode = createTNodeAndAddOpCode(
       tView, rootTNode, existingTNodes, lView, createOpCodes, hasBinding ? null : text, false);
+  const index = tNode.index;
   if (hasBinding) {
-    generateBindingUpdateOpCodes(updateOpCodes, text, tNode.index, null, 0, null);
+    generateBindingUpdateOpCodes(updateOpCodes, text, index, null, 0, null);
   }
+  return index;
 }
 
 /**
@@ -366,7 +383,7 @@ function toMaskBit(bindingIndex: number): number {
   return 1 << Math.min(bindingIndex, 31);
 }
 
-export function isRootTemplateMessage(subTemplateIndex: number): subTemplateIndex is - 1 {
+function isRootTemplateMessage(subTemplateIndex: number): subTemplateIndex is - 1 {
   return subTemplateIndex === -1;
 }
 
@@ -441,9 +458,9 @@ export function getTranslationForTemplate(message: string, subTemplateIndex: num
  *   - `lView[anchorIdx]` points to a `Comment` node representing the anchor for the ICU.
  *   - `tView.data[anchorIdx]` points to the `TIcuContainerNode` if ICU is root (`null` otherwise)
  */
-export function icuStart(
+function icuStart(
     tView: TView, lView: LView, updateOpCodes: I18nUpdateOpCodes, parentIdx: number,
-    icuExpression: IcuExpression, anchorIdx: number) {
+    icuExpression: IcuExpression, anchorIdx: number): I18nICUNode {
   ngDevMode && assertDefined(icuExpression, 'ICU expression must be defined');
   let bindingMask = 0;
   const tIcu: TIcu = {
@@ -458,6 +475,7 @@ export function icuStart(
   addUpdateIcuSwitch(updateOpCodes, icuExpression, anchorIdx);
   setTIcu(tView, anchorIdx, tIcu);
   const values = icuExpression.values;
+  const cases: I18nNode[][] = [];
   for (let i = 0; i < values.length; i++) {
     // Each value is an array of strings & other ICU expressions
     const valueArr = values[i];
@@ -471,14 +489,22 @@ export function icuStart(
         valueArr[j] = `<!--�${icuIndex}�-->`;
       }
     }
+    const ast: I18nNode[] = [];
+    cases.push(ast);
     bindingMask = parseIcuCase(
-                      tView, tIcu, lView, updateOpCodes, parentIdx, icuExpression.cases[i],
+                      tView, tIcu, lView, ast, updateOpCodes, parentIdx, icuExpression.cases[i],
                       valueArr.join(''), nestedIcus) |
         bindingMask;
   }
   if (bindingMask) {
     addUpdateIcuUpdate(updateOpCodes, bindingMask, anchorIdx);
   }
+  return {
+    kind: I18nNodeKind.ICU,
+    index: anchorIdx,
+    cases,
+    currentCaseLViewIndex: tIcu.currentCaseLViewIndex
+  } as I18nICUNode;
 }
 
 /**
@@ -488,7 +514,7 @@ export function icuStart(
  * @param pattern Text containing an ICU expression that needs to be parsed.
  *
  */
-export function parseICUBlock(pattern: string): IcuExpression {
+function parseICUBlock(pattern: string): IcuExpression {
   const cases = [];
   const values: (string|IcuExpression)[][] = [];
   let icuType = IcuType.plural;
@@ -536,7 +562,7 @@ export function parseICUBlock(pattern: string): IcuExpression {
  *   - odd positions: `string` => text between ICU expressions
  *   - even positions: `ICUExpression` => ICU expression parsed into `ICUExpression` record.
  */
-export function i18nParseTextIntoPartsAndICU(pattern: string): (string|IcuExpression)[] {
+function i18nParseTextIntoPartsAndICU(pattern: string): (string|IcuExpression)[] {
   if (!pattern) {
     return [];
   }
@@ -585,9 +611,10 @@ export function i18nParseTextIntoPartsAndICU(pattern: string): (string|IcuExpres
  * Parses a node, its children and its siblings, and generates the mutate & update OpCodes.
  *
  */
-export function parseIcuCase(
-    tView: TView, tIcu: TIcu, lView: LView, updateOpCodes: I18nUpdateOpCodes, parentIdx: number,
-    caseName: string, unsafeCaseHtml: string, nestedIcus: IcuExpression[]): number {
+function parseIcuCase(
+    tView: TView, tIcu: TIcu, lView: LView, ast: Array<I18nNode>, updateOpCodes: I18nUpdateOpCodes,
+    parentIdx: number, caseName: string, unsafeCaseHtml: string,
+    nestedIcus: IcuExpression[]): number {
   const create: IcuCreateOpCodes = [] as any;
   const remove: I18nRemoveOpCodes = [] as any;
   const update: I18nUpdateOpCodes = [] as any;
@@ -607,7 +634,7 @@ export function parseIcuCase(
   const inertRootNode = getTemplateContent(inertBodyElement!) as Element || inertBodyElement;
   if (inertRootNode) {
     return walkIcuTree(
-        tView, tIcu, lView, updateOpCodes, create, remove, update, inertRootNode, parentIdx,
+        tView, tIcu, lView, ast, updateOpCodes, create, remove, update, inertRootNode, parentIdx,
         nestedIcus, 0);
   } else {
     return 0;
@@ -615,9 +642,10 @@ export function parseIcuCase(
 }
 
 function walkIcuTree(
-    tView: TView, tIcu: TIcu, lView: LView, sharedUpdateOpCodes: I18nUpdateOpCodes,
-    create: IcuCreateOpCodes, remove: I18nRemoveOpCodes, update: I18nUpdateOpCodes,
-    parentNode: Element, parentIdx: number, nestedIcus: IcuExpression[], depth: number): number {
+    tView: TView, tIcu: TIcu, lView: LView, ast: Array<I18nNode>,
+    sharedUpdateOpCodes: I18nUpdateOpCodes, create: IcuCreateOpCodes, remove: I18nRemoveOpCodes,
+    update: I18nUpdateOpCodes, parentNode: Element, parentIdx: number, nestedIcus: IcuExpression[],
+    depth: number): number {
   let bindingMask = 0;
   let currentNode = parentNode.firstChild;
   while (currentNode) {
@@ -654,10 +682,15 @@ function walkIcuTree(
               addCreateAttribute(create, newIndex, attr);
             }
           }
+          const elementNode: I18nElementNode =
+              {kind: I18nNodeKind.ELEMENT, index: newIndex, children: [], debug: tagName};
+          ast.push(elementNode);
+
           // Parse the children of this node (if any)
-          bindingMask = walkIcuTree(
-                            tView, tIcu, lView, sharedUpdateOpCodes, create, remove, update,
-                            currentNode as Element, newIndex, nestedIcus, depth + 1) |
+          bindingMask =
+              walkIcuTree(
+                  tView, tIcu, lView, elementNode.children, sharedUpdateOpCodes, create, remove,
+                  update, currentNode as Element, newIndex, nestedIcus, depth + 1) |
               bindingMask;
           addRemoveNode(remove, newIndex, depth);
         }
@@ -671,6 +704,7 @@ function walkIcuTree(
           bindingMask =
               generateBindingUpdateOpCodes(update, value, newIndex, null, 0, null) | bindingMask;
         }
+        ast.push({kind: I18nNodeKind.TEXT, index: newIndex, debug: value} as I18nTextNode);
         break;
       case Node.COMMENT_NODE:
         // Check if the comment node is a placeholder for a nested ICU
@@ -682,7 +716,7 @@ function walkIcuTree(
           addCreateNodeAndAppend(
               create, ICU_MARKER, ngDevMode ? `nested ICU ${nestedIcuIndex}` : '', parentIdx,
               newIndex);
-          icuStart(tView, lView, sharedUpdateOpCodes, parentIdx, icuExpression, newIndex);
+          ast.push(icuStart(tView, lView, sharedUpdateOpCodes, parentIdx, icuExpression, newIndex));
           addRemoveNestedIcu(remove, newIndex, depth);
         }
         break;

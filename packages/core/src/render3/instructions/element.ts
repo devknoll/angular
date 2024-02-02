@@ -9,12 +9,12 @@
 import {invalidSkipHydrationHost, validateMatchingNode, validateNodeExists} from '../../hydration/error_handling';
 import {locateNextRNode} from '../../hydration/node_lookup_utils';
 import {hasSkipHydrationAttrOnRElement, hasSkipHydrationAttrOnTNode} from '../../hydration/skip_hydration';
-import {getSerializedContainerViews, isDisconnectedNode, markRNodeAsClaimedByHydration, markRNodeAsSkippedByHydration, setSegmentHead} from '../../hydration/utils';
+import {getSerializedContainerViews, isDetachedByI18n, isDisconnectedNode, markRNodeAsClaimedByHydration, markRNodeAsSkippedByHydration, setSegmentHead} from '../../hydration/utils';
 import {assertDefined, assertEqual, assertIndexInRange} from '../../util/assert';
 import {assertFirstCreatePass, assertHasParent} from '../assert';
 import {attachPatchData} from '../context_discovery';
 import {registerPostOrderHooks} from '../hooks';
-import {hasClassInput, hasStyleInput, TAttributes, TElementNode, TNode, TNodeFlags, TNodeType} from '../interfaces/node';
+import {hasClassInput, hasStyleInput, TAttributes, TElementNode, TNode, TNodeType} from '../interfaces/node';
 import {Renderer} from '../interfaces/renderer';
 import {RElement} from '../interfaces/renderer_dom';
 import {isComponentHost, isContentQueryHost, isDirectiveHost} from '../interfaces/type_checks';
@@ -102,7 +102,7 @@ export function ɵɵelementStart(
   setCurrentTNode(tNode, true);
   setupStaticAttributes(renderer, native, tNode);
 
-  if ((tNode.flags & TNodeFlags.isDetached) !== TNodeFlags.isDetached && wasLastNodeCreated()) {
+  if (!isDetachedByI18n(tNode) && wasLastNodeCreated()) {
     // In the i18n case, the translation may have removed this element, so only add it if it is not
     // detached. See `TNodeType.Placeholder` and `LFrame.inI18n` for more context.
     appendChild(tView, lView, native, tNode);
@@ -203,8 +203,8 @@ function locateOrCreateElementNodeImpl(
     tView: TView, lView: LView, tNode: TNode, renderer: Renderer, name: string,
     index: number): RElement {
   const hydrationInfo = lView[HYDRATION];
-  const isNodeCreationMode =
-      !hydrationInfo || isInSkipHydrationBlock() || isDisconnectedNode(hydrationInfo, index);
+  const isNodeCreationMode = !hydrationInfo || isInSkipHydrationBlock() ||
+      isDetachedByI18n(tNode) || isDisconnectedNode(hydrationInfo, index);
   lastNodeWasCreated(isNodeCreationMode);
 
   // Regular creation mode.

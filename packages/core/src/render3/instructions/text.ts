@@ -7,11 +7,11 @@
  */
 import {validateMatchingNode} from '../../hydration/error_handling';
 import {locateNextRNode} from '../../hydration/node_lookup_utils';
-import {isDisconnectedNode, markRNodeAsClaimedByHydration} from '../../hydration/utils';
+import {isDetachedByI18n, isDisconnectedNode, markRNodeAsClaimedByHydration} from '../../hydration/utils';
 import {assertEqual, assertIndexInRange} from '../../util/assert';
 import {TElementNode, TNode, TNodeType} from '../interfaces/node';
 import {RText} from '../interfaces/renderer_dom';
-import {HEADER_OFFSET, HYDRATION, LView, RENDERER, T_HOST, TView} from '../interfaces/view';
+import {HEADER_OFFSET, HYDRATION, LView, RENDERER, TView} from '../interfaces/view';
 import {appendChild, createTextNode} from '../node_manipulation';
 import {getBindingIndex, getLView, getTView, isInSkipHydrationBlock, lastNodeWasCreated, setCurrentTNode, wasLastNodeCreated} from '../state';
 
@@ -66,8 +66,8 @@ let _locateOrCreateTextNode: typeof locateOrCreateTextNodeImpl =
 function locateOrCreateTextNodeImpl(
     tView: TView, lView: LView, tNode: TNode, value: string, index: number): RText {
   const hydrationInfo = lView[HYDRATION];
-  const isNodeCreationMode =
-      !hydrationInfo || isInSkipHydrationBlock() || isDisconnectedNode(hydrationInfo, index);
+  const isNodeCreationMode = !hydrationInfo || isInSkipHydrationBlock() ||
+      isDetachedByI18n(tNode) || isDisconnectedNode(hydrationInfo, index);
   lastNodeWasCreated(isNodeCreationMode);
 
   // Regular creation mode.

@@ -10,6 +10,7 @@ import {Injector} from '../di/injector';
 import type {ViewRef} from '../linker/view_ref';
 import {LContainer} from '../render3/interfaces/container';
 import {getDocument} from '../render3/interfaces/document';
+import {TNode, TNodeFlags} from '../render3/interfaces/node';
 import {RElement, RNode} from '../render3/interfaces/renderer_dom';
 import {isRootView} from '../render3/interfaces/type_checks';
 import {HEADER_OFFSET, LView, TVIEW, TViewType} from '../render3/interfaces/view';
@@ -243,6 +244,50 @@ export function processTextNodeMarkersBeforeHydration(node: HTMLElement) {
 }
 
 /**
+ * TODO:
+ * @param node
+ * @param corruptedTextNodes
+ */
+export function processTextNodeBeforeSerialization(
+    node: HTMLElement, corruptedTextNodes: Map<HTMLElement, TextNodeMarker>) {
+  // Handle cases where text nodes can be lost after DOM serialization:
+  //  1. When there is an *empty text node* in DOM: in this case, this
+  //     node would not make it into the serialized string and as a result,
+  //     this node wouldn't be created in a browser. This would result in
+  //     a mismatch during the hydration, where the runtime logic would expect
+  //     a text node to be present in live DOM, but no text node would exist.
+  //     Example: `<span>{{ name }}</span>` when the `name` is an empty string.
+  //     This would result in `<span></span>` string after serialization and
+  //     in a browser only the `span` element would be created. To resolve that,
+  //     an extra comment node is appended in place of an empty text node and
+  //     that special comment node is replaced with an empty text node *before*
+  //     hydration.
+  //  2. When there are 2 consecutive text nodes present in the DOM.
+  //     Example: `<div>Hello <ng-container *ngIf="true">world</ng-container></div>`.
+  //     In this scenario, the live DOM would look like this:
+  //       <div>#text('Hello ') #text('world') #comment('container')</div>
+  //     Serialized string would look like this: `<div>Hello world<!--container--></div>`.
+  //     The live DOM in a browser after that would be:
+  //       <div>#text('Hello world') #comment('container')</div>
+  //     Notice how 2 text nodes are now "merged" into one. This would cause hydration
+  //     logic to fail, since it'd expect 2 text nodes being present, not one.
+  //     To fix this, we insert a special comment node in between those text nodes, so
+  //     serialized representation is: `<div>Hello <!--ngtns-->world<!--container--></div>`.
+  //     This forces browser to create 2 text nodes separated by a comment node.
+  //     Before running a hydration process, this special comment node is removed, so the
+  //     live DOM has exactly the same state as it was before serialization.
+
+  // Collect this node as required special annotation only when its
+  // contents is empty. Otherwise, such text node would be present on
+  // the client after server-side rendering and no special handling needed.
+  if (node.textContent === '') {
+    corruptedTextNodes.set(node, TextNodeMarker.EmptyNode);
+  } else if (node.nextSibling?.nodeType === Node.TEXT_NODE) {
+    corruptedTextNodes.set(node, TextNodeMarker.Separator);
+  }
+}
+
+/**
  * Internal type that represents a claimed node.
  * Only used in dev mode.
  */
@@ -403,4 +448,13 @@ export function isDisconnectedNode(hydrationInfo: DehydratedView, index: number)
     hydrationInfo.disconnectedNodes = nodeIds ? new Set(nodeIds) : null;
   }
   return !!hydrationInfo.disconnectedNodes?.has(index);
+}
+
+/**
+ * Checks whether a TNode is considered detached, i.e. not present in the
+ * translated i18n template. We should not attempt hydration for such nodes
+ * and instead, use a regular "creation mode".
+ */
+export function isDetachedByI18n(tNode: TNode) {
+  return (tNode.flags & TNodeFlags.isDetached) === TNodeFlags.isDetached;
 }

@@ -341,6 +341,11 @@ export interface TI18n {
    * DOM are required.
    */
   update: I18nUpdateOpCodes;
+
+  /**
+   * TODO: The AST for the i18n message.
+   */
+  ast: Array<I18nNode>;
 }
 
 /**
@@ -407,4 +412,40 @@ export interface IcuExpression {
   mainBinding: number;
   cases: string[];
   values: (string|IcuExpression)[][];
+}
+
+export type I18nNode = I18nTextNode|I18nElementNode|I18nICUNode|I18nPlaceholderNode;
+
+export type I18nTextNode = {
+  kind: I18nNodeKind.TEXT; index: number;
+  debug?: string;
+};
+
+export type I18nElementNode = {
+  kind: I18nNodeKind.ELEMENT; index: number; children: Array<I18nNode>;
+  debug?: string;
+};
+
+export type I18nICUNode = {
+  kind: I18nNodeKind.ICU; index: number; cases: Array<Array<I18nNode>>;
+  currentCaseLViewIndex: number;
+};
+
+export type I18nPlaceholderNode = {
+  kind: I18nNodeKind.PLACEHOLDER; index: number; children: Array<I18nNode>;
+  type: I18nPlaceholderType;
+};
+
+// TODO: These are strings for debugging.
+export const enum I18nPlaceholderType {
+  ELEMENT = 'ELEMENT',
+  SUBTEMPLATE = 'SUBTEMPLATE',
+}
+
+// TODO: These are strings for debugging.
+export const enum I18nNodeKind {
+  TEXT = 'TEXT',
+  ELEMENT = 'ELEMENT',
+  PLACEHOLDER = 'PLACEHOLDER',
+  ICU = 'ICU',
 }

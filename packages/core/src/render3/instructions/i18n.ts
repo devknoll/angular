@@ -11,6 +11,7 @@ import '../../util/ng_i18n_closure_mode';
 import {assertDefined} from '../../util/assert';
 import {bindingUpdated} from '../bindings';
 import {applyCreateOpCodes, applyI18n, setMaskBit} from '../i18n/i18n_apply';
+import {computeI18nDeserialization} from '../i18n/i18n_hydration';
 import {i18nAttributesFirstPass, i18nStartFirstCreatePass} from '../i18n/i18n_parse';
 import {i18nPostprocess} from '../i18n/i18n_postprocess';
 import {TI18n} from '../interfaces/i18n';
@@ -41,6 +42,7 @@ import {getConstant} from '../util/view_utils';
  *
  * @param index A unique index of the translation in the static block.
  * @param messageIndex An index of the translation message from the `def.consts` array.
+ * @param placeholderIndices An array of placeholder indices
  * @param subTemplateIndex Optional sub-template index in the `message`.
  *
  * @codeGenApi
@@ -79,6 +81,7 @@ export function ɵɵi18nStart(
   const insertInFrontOf = parentTNode && (parentTNode.type & TNodeType.ElementContainer) ?
       lView[parentTNode.index] :
       null;
+  computeI18nDeserialization(lView, adjustedIndex);
   applyCreateOpCodes(lView, tI18n.create, parentRNode, insertInFrontOf);
   setInI18nBlock(true);
 }
