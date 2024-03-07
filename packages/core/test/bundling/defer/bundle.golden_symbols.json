@@ -1404,6 +1404,9 @@
     "name": "init_i18n_debug"
   },
   {
+    "name": "init_i18n_hydration"
+  },
+  {
     "name": "init_i18n_icu_container_visitor"
   },
   {
