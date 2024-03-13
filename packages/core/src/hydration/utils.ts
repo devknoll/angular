@@ -393,17 +393,25 @@ export function calcSerializedContainerSize(hydrationInfo: DehydratedView, index
 }
 
 /**
- * Checks whether a node is annotated as "disconnected", i.e. not present
- * in the DOM at serialization time. We should not attempt hydration for
- * such nodes and instead, use a regular "creation mode".
+ * Attempt to initialize the `disconnectedNodes` field of the given
+ * `DehydratedView`. Returns the initialized value.
  */
-export function isDisconnectedNode(hydrationInfo: DehydratedView, index: number): boolean {
+export function initDisconnectedNodes(hydrationInfo: DehydratedView): Set<number>|null {
   // Check if we are processing disconnected info for the first time.
   if (typeof hydrationInfo.disconnectedNodes === 'undefined') {
     const nodeIds = hydrationInfo.data[DISCONNECTED_NODES];
     hydrationInfo.disconnectedNodes = nodeIds ? new Set(nodeIds) : null;
   }
-  return !!hydrationInfo.disconnectedNodes?.has(index);
+  return hydrationInfo.disconnectedNodes;
+}
+
+/**
+ * Checks whether a node is annotated as "disconnected", i.e. not present
+ * in the DOM at serialization time. We should not attempt hydration for
+ * such nodes and instead, use a regular "creation mode".
+ */
+export function isDisconnectedNode(hydrationInfo: DehydratedView, index: number): boolean {
+  return !!initDisconnectedNodes(hydrationInfo)?.has(index);
 }
 
 /**

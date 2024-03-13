@@ -183,7 +183,7 @@ export interface DehydratedView {
    * the node is removed from the map. The remaining entries indicate
    * dehydrated nodes that need to be cleaned up.
    */
-  i18nNodes?: Map<number, RNode>;
+  i18nNodes?: Map<number, RNode|null>;
 }
 
 /**
